@@ -1,0 +1,4 @@
+openai>=1.0
+datasets>=3.0
+matplotlib>=3.7
+numpy>=1.24
