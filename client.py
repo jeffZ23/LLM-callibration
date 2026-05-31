@@ -4,6 +4,7 @@ Returns parsed (answer_letter, confidence_pct, reasoning) for each call.
 """
 
 import json
+import math
 import os
 import re
 import time
@@ -18,6 +19,22 @@ class AgentResponse:
     confidence: float    # 0-100
     reasoning: str
     raw: str             # raw model output (for the trace / debugging)
+
+
+@dataclass
+class LogprobResponse:
+    """Token-probability ('internal') confidence for a multiple-choice answer.
+
+    Built from the model's logprobs on the FIRST generated token of a
+    letter-only answer: we read the top candidate tokens, keep those that are
+    valid option letters, and softmax-normalize over them (Kadavath et al.,
+    2022 style). This is the model's intrinsic probability mass on each choice,
+    independent of any verbalized self-report.
+    """
+    answer: str                       # argmax option letter
+    prob: float                       # normalized prob of `answer` (0-1)
+    dist: dict                        # {letter: normalized prob} over options
+    raw_token: str                    # the first generated token (debug)
 
 
 _client = None
@@ -100,3 +117,71 @@ def call_agent(model_id: str, system: str, user: str,
             last_err = e
             time.sleep(1.5 * (attempt + 1))
     raise RuntimeError(f"call_agent failed after {max_retries} retries: {last_err}")
+
+
+def _norm_letter(token: str) -> str:
+    """First alphabetic character of a token, uppercased ('' if none)."""
+    for ch in token.strip():
+        if ch.isalpha():
+            return ch.upper()
+    return ""
+
+
+def call_letter_logprobs(model_id: str, system: str, user: str,
+                         option_letters: list[str],
+                         max_retries: int = 3,
+                         top_logprobs: int = 20) -> LogprobResponse:
+    """Ask for a single-letter answer and read the token-probability distribution
+    over the option letters from the first token's logprobs.
+
+    Uses temperature=0 so the reported distribution reflects the model's actual
+    next-token probabilities. Requires a provider that returns logprobs (OpenAI
+    models via OpenRouter do)."""
+    last_err = None
+    for attempt in range(max_retries):
+        try:
+            resp = get_client().chat.completions.create(
+                model=model_id,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                temperature=0,
+                max_tokens=5,
+                logprobs=True,
+                top_logprobs=top_logprobs,
+            )
+            choice = resp.choices[0]
+            content = getattr(choice.logprobs, "content", None) if choice.logprobs else None
+            if not content:
+                raise ValueError("no logprobs returned by provider")
+
+            first = content[0]
+            raw_token = first.token
+            # Collect logprob for each valid option letter from the top-k
+            letter_lp: dict[str, float] = {}
+            for cand in first.top_logprobs:
+                L = _norm_letter(cand.token)
+                if L in option_letters and L not in letter_lp:
+                    letter_lp[L] = cand.logprob
+            # Ensure the actually-sampled token is represented
+            L0 = _norm_letter(raw_token)
+            if L0 in option_letters and L0 not in letter_lp:
+                letter_lp[L0] = first.logprob
+
+            if not letter_lp:
+                raise ValueError(f"no option letter in top tokens: {raw_token!r}")
+
+            # Softmax-normalize over the option letters that appeared
+            m = max(letter_lp.values())
+            exps = {L: math.exp(lp - m) for L, lp in letter_lp.items()}
+            Z = sum(exps.values())
+            dist = {L: v / Z for L, v in exps.items()}
+            answer = max(dist, key=dist.get)
+            return LogprobResponse(answer=answer, prob=dist[answer],
+                                   dist=dist, raw_token=raw_token)
+        except Exception as e:
+            last_err = e
+            time.sleep(1.5 * (attempt + 1))
+    raise RuntimeError(
+        f"call_letter_logprobs failed after {max_retries} retries: {last_err}")
