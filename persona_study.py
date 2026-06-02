@@ -146,9 +146,10 @@ def _variant_stats(run: list[dict]) -> dict:
                 cc, kk = _final_under_condition(a, "full")
                 fc.append(cc)
                 fk.append(kk)
-            d_full = expected_calibration_error(fc, fk, config.ECE_N_BINS) - r1e
+            post_e = expected_calibration_error(fc, fk, config.ECE_N_BINS)
+            d_full = post_e - r1e
         else:
-            d_full = float("nan")
+            r1e = post_e = d_full = float("nan")
 
         stats[m] = {
             "n_agents": len(s["conf"]),
@@ -157,6 +158,8 @@ def _variant_stats(run: list[dict]) -> dict:
             "ece": ece,
             "trate": trate,
             "n_trig": len(agents),
+            "pre_ece": r1e,
+            "post_ece": post_e,
             "d_full": d_full,
         }
     return stats
@@ -233,7 +236,7 @@ def _plot(loaded):
     x = np.arange(len(MODEL_ORDER))
     width = 0.8 / max(1, len(labels))
 
-    fig, axes = plt.subplots(1, 2, figsize=(13, 5))
+    fig, axes = plt.subplots(1, 3, figsize=(19, 5))
     # (1) baseline ECE by model across persona sets
     ax = axes[0]
     for i, (lab, stats) in enumerate(loaded):
@@ -257,6 +260,32 @@ def _plot(loaded):
     ax.set_ylabel("Reflection trigger rate (%)")
     ax.set_title("Disagreement vs. persona set")
     ax.legend(fontsize=8)
+
+    # (3) before/after ECE on the triggered subset (condition=full), per persona
+    #     set: paired pre (hatched) and post (solid) bars within each set's slot.
+    ax = axes[2]
+    for i, (lab, stats) in enumerate(loaded):
+        pre = [stats.get(m, {}).get("pre_ece", np.nan) for m in MODEL_ORDER]
+        post = [stats.get(m, {}).get("post_ece", np.nan) for m in MODEL_ORDER]
+        base = x + i * width
+        color = f"C{i}"
+        ax.bar(base - width * 0.22, pre, width=width * 0.42, color=color,
+               alpha=0.45, edgecolor="black", hatch="//",
+               label=f"{lab} pre" if i == 0 else None)
+        ax.bar(base + width * 0.22, post, width=width * 0.42, color=color,
+               alpha=0.9, edgecolor="black",
+               label=f"{lab} post" if i == 0 else None)
+    ax.set_xticks(x + (len(labels) - 1) * width / 2)
+    ax.set_xticklabels(MODEL_ORDER, rotation=20, ha="right")
+    ax.set_ylabel("ECE on triggered subset (full)")
+    ax.set_title("Reflection: before (hatched) → after (solid)")
+    # legend keyed by persona-set color, plus the pre/post hatch convention
+    from matplotlib.patches import Patch
+    handles = [Patch(facecolor=f"C{i}", edgecolor="black", alpha=0.85, label=lab)
+               for i, (lab, _) in enumerate(loaded)]
+    handles += [Patch(facecolor="white", edgecolor="black", hatch="//", label="pre"),
+                Patch(facecolor="grey", edgecolor="black", label="post")]
+    ax.legend(handles=handles, fontsize=7, ncol=2)
 
     fig.tight_layout()
     out = os.path.join(RESULTS_DIR, "persona_comparison.png")
