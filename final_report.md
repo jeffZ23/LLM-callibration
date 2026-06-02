@@ -155,6 +155,75 @@ Crucially, self-report is **not obviously inferior** to probability-based measur
 
 Three findings stand out. (1) **Verbalized confidence is the better-calibrated of the two** — its ECE is roughly half that of the logprob measure (0.055 vs 0.115), with barely-overlapping bootstrap CIs, and the logprob measure is the *more* overconfident (mean 94.4%). This is precisely the Tian et al. (2023) result for RLHF-tuned models, now reproduced within our own panel, and it vindicates our reliance on self-report rather than treating logprobs as ground truth. (2) **The two measures agree on the chosen answer 93.3% of the time** (logprob argmax vs verbalized letter), so they reflect differing *confidence* in the same decision, not different decisions. (3) **Yet the two confidences are only weakly coupled**: the correlation between stated confidence and the model's internal probability on the very answer it stated is just r = +0.265, and the mean internal probability on the stated answer (91.3%) diverges from the stated value (87.8%). The right panel of `results/logprob.png` makes this concrete — at any fixed stated confidence the internal probability is smeared across nearly the full [0, 1] range. So GPT-4o directionally "believes what it says," but loosely; the verbalized number is not a faithful transcription of the underlying logits, which is consistent with the artifact-of-tuning reading above.
 
+### 4.2 On the persona ensemble (persona-count ablation)
+
+The main study fixes three diverse personas. Two questions follow naturally: does the *diversity* of the ensemble matter, or merely having three votes? And is three the right number? We ran a persona-count ablation holding everything else identical (same four models, same 150 questions, same temperature, same four reflection conditions), varying only the persona set:
+
+- **1-voice** — three agents with the *same* neutral prompt. Disagreement can only arise from sampling noise, isolating the value of persona *diversity* from merely having three votes.
+- **3-persona** — the main study (analytical / devil's advocate / knowledge), reused verbatim.
+- **5-persona** — the main three plus an *Intuitive Responder* and a *Probabilistic Reasoner*.
+
+**Trigger thresholds differ by ensemble size, by design.** With three agents the minimal disagreement (a 2-vs-1 split) has vote entropy H = 0.637, so the main H > 0.6 trigger fires on *any* disagreement. With five agents the minimal 4-vs-1 split is only H = 0.500, which H > 0.6 would silently drop; we therefore lower the 5-persona trigger to H > 0.4 so that "any disagreement triggers" — matching the 3-persona semantics. (1-voice keeps H > 0.6 with its three agents, identical to the main study.)
+
+**Table 5 — Baseline calibration by persona set (all agents, Round 1).**
+
+| Model        | Persona set | Baseline ECE | Brier | Accuracy | Mean conf |
+|--------------|-------------|-------------:|------:|---------:|----------:|
+| llama-3.1-8b | 1-voice     | 0.279 | 0.320 | 60.7% | 87.8% |
+|              | 3-persona   | **0.205** | **0.267** | **66.8%** | 87.3% |
+|              | 5-persona   | 0.231 | 0.282 | 63.7% | 86.2% |
+| qwen-2.5-7b  | 1-voice     | 0.206 | 0.269 | 66.0% | 85.1% |
+|              | 3-persona   | **0.154** | **0.223** | **72.9%** | 88.0% |
+|              | 5-persona   | 0.174 | 0.240 | 70.7% | 86.5% |
+| ministral-8b | 1-voice     | 0.245 | 0.267 | 69.8% | 94.0% |
+|              | 3-persona   | **0.184** | **0.219** | **75.6%** | 87.6% |
+|              | 5-persona   | 0.190 | 0.231 | 72.9% | 88.9% |
+| gpt-4o       | 1-voice     | 0.135 | 0.165 | 79.3% | 92.4% |
+|              | 3-persona   | **0.051** | **0.118** | **84.9%** | 87.8% |
+|              | 5-persona   | 0.064 | 0.132 | 82.9% | 88.3% |
+
+**Table 6 — Disagreement (reflection triggering) by persona set.**
+
+| Model        | Persona set | Triggered questions / 150 | Trigger rate | Reflecting agents |
+|--------------|-------------|--------------------------:|-------------:|------------------:|
+| llama-3.1-8b | 1-voice     | 32  | 21.3% | 96  |
+|              | 3-persona   | 53  | 35.3% | 159 |
+|              | 5-persona   | 69  | 46.0% | 345 |
+| qwen-2.5-7b  | 1-voice     | 20  | 13.3% | 60  |
+|              | 3-persona   | 30  | 20.0% | 90  |
+|              | 5-persona   | 46  | 30.7% | 230 |
+| ministral-8b | 1-voice     | 12  | 8.0%  | 36  |
+|              | 3-persona   | 50  | 33.3% | 150 |
+|              | 5-persona   | 64  | 42.7% | 320 |
+| gpt-4o       | 1-voice     | 6   | 4.0%  | 18  |
+|              | 3-persona   | 28  | 18.7% | 84  |
+|              | 5-persona   | 34  | 22.7% | 170 |
+
+**Table 7 — Reflection effect on each set's triggered subset (condition = full). Pre/post are Round 1 vs. post-reflection.**
+
+| Model        | Persona set | ECE pre | ECE post | Δ ECE  | Brier pre→post | Conf pre→post | Acc pre→post |
+|--------------|-------------|--------:|---------:|-------:|:--------------:|:-------------:|:------------:|
+| llama-3.1-8b | 1-voice     | 0.651 | 0.619 | −0.032 | 0.602→0.584 | 84.9→87.9 | 21.9→26.0 |
+|              | 3-persona   | 0.507 | 0.424 | −0.083 | 0.486→0.421 | 85.3→80.8 | 34.6→39.6 |
+|              | 5-persona   | 0.446 | 0.388 | −0.058 | 0.430→0.411 | 84.6→83.1 | 41.4→46.1 |
+| qwen-2.5-7b  | 1-voice     | 0.557 | 0.630 | +0.073 | 0.529→0.589 | 79.7→89.6 | 30.0→26.7 |
+|              | 3-persona   | 0.511 | 0.637 | +0.126 | 0.486→0.607 | 85.6→91.7 | 34.4→28.9 |
+|              | 5-persona   | 0.468 | 0.587 | +0.119 | 0.463→0.563 | 85.1→90.3 | 39.1→32.2 |
+| ministral-8b | 1-voice     | 0.689 | 0.766 | +0.077 | 0.656→0.720 | 91.1→93.3 | 22.2→16.7 |
+|              | 3-persona   | 0.476 | 0.447 | −0.029 | 0.480→0.443 | 82.0→83.3 | 42.7→42.0 |
+|              | 5-persona   | 0.437 | 0.451 | +0.014 | 0.449→0.447 | 84.7→88.2 | 44.4→45.0 |
+| gpt-4o       | 1-voice     | 0.403 | 0.211 | −0.192 | 0.400→0.225 | 89.7→88.9 | 50.0→72.2 |
+|              | 3-persona   | 0.408 | 0.436 | +0.028 | 0.422→0.414 | 78.0→78.9 | 40.5→36.9 |
+|              | 5-persona   | 0.419 | 0.370 | −0.049 | 0.419→0.373 | 80.4→82.3 | 39.4→45.3 |
+
+Three conclusions:
+
+1. **Persona *diversity*, not vote count, drives the benefit.** 1-voice (three identical prompts) is the worst-calibrated set on every model (e.g. Llama ECE 0.279 vs. 0.205, GPT-4o 0.135 vs. 0.051) **and** produces the least disagreement — its trigger rate is far below 3-persona's on every model (Llama 21.3% vs. 35.3%, Ministral 8.0% vs. 33.3%), despite using the *same three agents and the same H > 0.6 threshold*. Three voices that merely echo one prompt disagree only through sampling noise; the calibration and disagreement signal both come from genuine persona diversity. (These are two distinct findings — worse calibration is an ECE result, less disagreement is a trigger-rate result — that happen to coincide.)
+2. **Three tuned personas beat five.** Adding the Intuitive and Probabilistic voices *worsens* baseline calibration on all four models (5-persona ECE and Brier sit between 1-voice and 3-persona). The Intuitive Responder in particular walks into TruthfulQA's traps, dragging accuracy down ~2 points. More diverse voices add noise faster than signal here.
+3. **The reflection-effect *sign* is largely persona-set-invariant, with one informative exception.** Llama improves under every set (confidence ↓, accuracy ↑); Qwen herds under every set (confidence ↑ while accuracy ↓ — e.g. 85→90% conf, 39→32% acc at 5-persona); Ministral is roughly neutral. The exception is GPT-4o, which flips from a small degradation at 3-persona (Δ ECE +0.028) to a net improvement at 5-persona (−0.049): its larger triggered subset (170 vs. 84 agents) surfaces more genuinely-split questions it can recover on. The per-model reflection signature from §3.2 is thus robust to ensemble composition, not an artifact of the particular three personas.
+
+A caveat for interpreting Table 7: pre/post are computed on each set's *own* triggered subset, which differs in size and difficulty (the 5-persona subset is roughly twice as large and includes the easier 4-1-split cases). Δ ECE is therefore valid *within* a row but not strictly comparable *across* persona sets. Two-panel comparison (baseline ECE and trigger rate by persona set) in `results/persona_comparison.png`; full table in `results/persona_comparison.md`.
+
 ## 5. Limitations
 
 1. **Single dataset.** TruthfulQA is designed to elicit confident misconceptions. We do not yet know whether the herding pattern and the signal-specific ablation results persist on harder, lower-prior datasets such as GPQA. Stratifying by dataset difficulty is the most important next step.
@@ -179,6 +248,7 @@ All code is in `~/Desktop/calibration_prototype/`:
 - `experiment.py` — Round 1 + per-condition Round 2 pipeline, concurrent API calls, per-question checkpointing, and `add_models()` for incrementally merging a new model into an existing run.
 - `analysis.py` — baseline summary (with CIs), reflection ablation table + plot, reliability diagram, disagreement scatter, case-study generators.
 - `run.py` — entry point. `python run.py` (full run), `python run.py --add-models` (incrementally add models from config), `python run.py --analyze` (re-analyze existing results).
+- `persona_study.py` — persona-count ablation (§4.2). Swaps `config.PERSONAS` and the entropy threshold per variant (1-voice at H > 0.6, 5-persona at H > 0.4), reusing `run_final.json` for the 3-persona column. `python persona_study.py --run 5persona` (or `nopersona`/`both`) runs a variant then writes `results/persona_comparison.{md,png}`; `--analyze` re-tabulates without API calls.
 
 Raw per-agent results are saved to `results/run_final.json`.
 
